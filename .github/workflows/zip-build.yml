@@ -47,24 +47,17 @@ jobs:
           CFG="config.xml"
           echo "Before sanitize:"
           grep -n "<plugin\|<edit-config\|<config-file" -n "$CFG" || true
-
-          # remove <edit-config> ... </edit-config>
           sed -i '/<edit-config\b/,/<\/edit-config>/d' "$CFG"
-          # remove <config-file ...> ... </config-file>
           sed -i '/<config-file\b/,/<\/config-file>/d' "$CFG"
-          # keep only cordova-plugin-whitelist (if present)
           sed -i '/<plugin\b/{/cordova-plugin-whitelist/!d}' "$CFG"
-
           echo "After sanitize:"
           grep -n "<plugin\|<edit-config\|<config-file" -n "$CFG" || true
-
-          # clean plugins folder & cordova plugin list if exists
           rm -rf plugins
           if [ -f package.json ]; then
             node -e "let p=require('./package.json'); if(p.cordova){p.cordova.plugins={}}; require('fs').writeFileSync('package.json', JSON.stringify(p,null,2));"
           fi
 
-      # ✅ নতুন Version Code 8 + Version Name 2.3.4
+      # ✅ Version Code 8 + Version Name 2.3.4
       - name: Update version info
         working-directory: src
         run: |
@@ -76,7 +69,21 @@ jobs:
 
       - name: Add android platform
         working-directory: src
-        run: cordova platform add android@14 --no-telemetry
+        run: |
+          cordova platform add android@14 --no-telemetry
+          chmod +x platforms/android/gradlew
+
+      # ⛑️ NEW: Gradle-কে কম মেমরি/একটা worker-এ সীমাবদ্ধ করি
+      - name: Limit Gradle memory & workers
+        working-directory: src/platforms/android
+        run: |
+          {
+            echo 'org.gradle.jvmargs=-Xmx1536m -XX:MaxMetaspaceSize=512m'
+            echo 'org.gradle.workers.max=1'
+            echo 'android.enableJetifier=true'
+          } >> gradle.properties
+          echo "gradle.properties:"
+          cat gradle.properties
 
       # Namespace patch (safety)
       - name: Patch missing Android XML namespaces
@@ -90,10 +97,12 @@ jobs:
       - name: Build AAB (Release)
         working-directory: src
         env:
-          _JAVA_OPTIONS: "-Xmx2g"
-          GRADLE_OPTS: "-Xmx2g"
+          # JVM/Gradle memory caps (ওভাররাইড হিসেবে)
+          JAVA_TOOL_OPTIONS: "-Xmx1536m"
+          _JAVA_OPTIONS: "-Xmx1536m"
+          GRADLE_OPTS: "-Xmx1536m"
         run: |
-          echo "⏳ Starting build with limited memory (2GB)..."
+          echo "⏳ Building with limited memory and single worker…"
           cordova build android --release --packageType=bundle --no-telemetry --no-daemon --stacktrace
 
       - name: Restore keystore from secret

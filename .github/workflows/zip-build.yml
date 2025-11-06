@@ -28,9 +28,7 @@ jobs:
         id: z
         run: |
           ZIP=$(ls -1 *.zip | head -n1 || true)
-          if [ -z "$ZIP" ]; then
-            echo "No zip found in repo root"; exit 1
-          fi
+          if [ -z "$ZIP" ]; then echo "No zip found in repo root"; exit 1; fi
           echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
           echo "Found ZIP: $ZIP"
 
@@ -63,13 +61,13 @@ jobs:
           rm -rf www
           mkdir -p www
           unzip -oq "${{ steps.z.outputs.zip }}" -d www
-          # ZIP এর ভিতরে যদি আরেকটা www/ থাকে, ফ্ল্যাট করুন
+          # ZIP-এর ভিতরে যদি আরেকটা www/ থাকে, ফ্ল্যাট করে দিন
           if [ -d "www/www" ]; then
             shopt -s dotglob
             mv www/www/* www/ || true
             rm -rf www/www
           fi
-          # অ্যাপে অপ্রয়োজনীয় বড় ফাইল থাকলে মুছে দিন
+          # অপ্রয়োজনীয় বড় ফাইল মুছুন
           rm -f www/*.apk www/*.jks || true
           ls -la www
 
@@ -83,6 +81,7 @@ jobs:
             <description>Simple currency calculator for Riyal/Dirham → BDT.</description>
             <author email="taiponormaluse@gmail.com">Saif_Trisha</author>
 
+            <!-- Cordova-Android 13 সবচেয়ে স্টেবল -->
             <engine name="android" spec="^13.0.0" />
 
             <allow-navigation href="*" />
@@ -106,12 +105,10 @@ jobs:
 
       - name: Add Android platform
         run: |
-          # চাইলে android@14 ব্যবহার করতে পারেন, তবে 13 সবচেয়ে স্টেবল
           cordova platform add android@13
           chmod +x platforms/android/gradlew
           cordova requirements
 
-      # (Optional) লোগোকে স্প্ল্যাশ হিসেবে কপি করা
       - name: Use app logo as splash if exists (www/m-lgo.png)
         run: |
           if [ -f "www/m-lgo.png" ]; then
@@ -119,22 +116,42 @@ jobs:
             cp www/m-lgo.png platforms/android/app/src/main/res/drawable/splash.png
           fi
 
-      - name: Decode keystore and create release-signing.properties
+      - name: Decode keystore and create release-signing.properties (escape specials)
         run: |
+          set -e
           mkdir -p platforms/android
           echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > platforms/android/keystore.p12
+
+          SP="${{ secrets.KEYSTORE_PASSWORD }}"
+          KP="${{ secrets.KEY_PASSWORD }}"
+          AL="${{ secrets.KEY_ALIAS }}"
+
+          # Escape \  =  # for .properties
+          esc() {
+            s="$1"
+            s="${s//\\/\\\\}"
+            s="${s//=/\\=}"
+            s="${s//#/\\#}"
+            printf '%s' "$s"
+          }
+
+          SP_ESC="$(esc "$SP")"
+          KP_ESC="$(esc "$KP")"
+          AL_ESC="$(esc "$AL")"
+
           cat > platforms/android/release-signing.properties <<EOF
           storeFile=keystore.p12
-          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
-          keyAlias=${{ secrets.KEY_ALIAS }}
-          keyPassword=${{ secrets.KEY_PASSWORD }}
+          storePassword=${SP_ESC}
+          keyAlias=${AL_ESC}
+          keyPassword=${KP_ESC}
           storeType=pkcs12
           EOF
-          ls -la platforms/android
+
+          # Optional sanity check
+          keytool -list -keystore platforms/android/keystore.p12 -storetype pkcs12 -storepass "${SP}" >/dev/null
 
       - name: Build signed AAB (release)
         env:
-          # Gradle 8.x দরকার
           CORDOVA_ANDROID_GRADLE_DISTRIBUTION_URL: https://services.gradle.org/distributions/gradle-8.6-bin.zip
         run: |
           cordova build android --release -- --packageType=bundle --no-interactive --stacktrace

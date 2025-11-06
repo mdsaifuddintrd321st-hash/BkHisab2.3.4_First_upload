@@ -1,15 +1,17 @@
-name: Build Signed AAB from ZIP (Cordova, SDK 35)
+name: Build signed AAB from ZIP (Cordova, SDK 35)
 
 on:
   workflow_dispatch:
   push:
     branches: [ main ]
-    paths: ["*.zip", ".github/workflows/zip-build.yml"]
+    paths:
+      - "*.zip"
+      - ".github/workflows/zip-build.yml"
 
 env:
   APP_ID: com.saiftrisha.rialhisab
   APP_NAME: BkHisab
-  VERSION_NAME: 2.3.4
+  VERSION_NAME: "2.3.4"
   VERSION_CODE: 8
 
 jobs:
@@ -19,15 +21,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Find your ZIP
+      - name: Find ZIP in repo root
         id: z
         run: |
           ZIP=$(ls -1 *.zip | head -n1 || true)
           if [ -z "$ZIP" ]; then
-            echo "❌ No ZIP found in repo root"; exit 1
+            echo "No zip found in repo root"; exit 1
           fi
-          echo "zip=$ZIP" >> $GITHUB_OUTPUT
-          echo "Found ZIP: $ZIP"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "Found: $ZIP"
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -38,16 +40,17 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Cordova
+      - name: Install Cordova 12
         run: npm i -g cordova@12
 
       - name: Prepare www from ZIP
         run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip
           rm -rf www
           mkdir -p www
-          sudo apt-get update && sudo apt-get install -y unzip
           unzip -o "${{ steps.z.outputs.zip }}" -d www
-          # যদি ZIP-এর ভিতরে আবার www/www থাকে, ফ্ল্যাট করে দাও
+          # যদি ZIP এর ভিতরে আরেকটা www ফোল্ডার থাকে, ফ্ল্যাট করে দাও
           if [ -d "www/www" ]; then
             shopt -s dotglob
             mv www/www/* www/ || true
@@ -55,28 +58,40 @@ jobs:
           fi
           ls -la www
 
-      - name: Create config.xml (SDK 35)
+      - name: Create config.xml (target SDK 35)
         run: |
-          cat > config.xml <<EOF
+          cat > config.xml <<'EOF'
           <?xml version='1.0' encoding='utf-8'?>
           <widget id="${APP_ID}" version="${VERSION_NAME}" android-versionCode="${VERSION_CODE}"
                   xmlns="http://www.w3.org/ns/widgets" xmlns:cdv="http://cordova.apache.org/ns/1.0">
             <name>${APP_NAME}</name>
             <description>Simple currency calculator for Riyal/Dirham → BDT.</description>
             <author email="taiponormaluse@gmail.com">Saif_Trisha</author>
+
+            <!-- Platforms -->
             <engine name="android" spec="^13.0.0" />
-            <allow-navigation href="*"/>
-            <allow-intent href="*"/>
-            <preference name="android-minSdkVersion" value="24"/>
-            <preference name="android-targetSdkVersion" value="35"/>
-            <preference name="AndroidXEnabled" value="true"/>
-            <preference name="Orientation" value="portrait"/>
-            <preference name="Fullscreen" value="false"/>
+
+            <!-- Permissions/whitelist -->
+            <allow-navigation href="*" />
+            <allow-intent href="*" />
+
+            <!-- SDKs -->
+            <preference name="android-minSdkVersion" value="24" />
+            <preference name="android-targetSdkVersion" value="35" />
+            <preference name="AndroidXEnabled" value="true" />
+
+            <!-- Orientation/Fullscreen -->
+            <preference name="Orientation" value="portrait" />
+            <preference name="Fullscreen" value="false" />
+
+            <!-- Splash BG (optional) -->
             <platform name="android">
-              <preference name="AndroidWindowSplashScreenBackground" value="#041326"/>
+              <preference name="AndroidWindowSplashScreenBackground" value="#041326" />
             </platform>
-            <plugin name="cordova-plugin-whitelist" spec="^1.3.5"/>
-            <plugin name="cordova-plugin-splashscreen" spec="^6.0.2"/>
+
+            <!-- Plugins -->
+            <plugin name="cordova-plugin-whitelist" spec="^1.3.5" />
+            <plugin name="cordova-plugin-splashscreen" spec="^6.0.2" />
           </widget>
           EOF
 
@@ -85,44 +100,34 @@ jobs:
           cordova platform add android@13
           cordova requirements
 
-      - name: Optional: use app logo as Splash (if exists)
+      - name: Use app logo as splash if exists (www/m-lgo.png)
         run: |
-          if [ -f "www/m-logo.png" ]; then
-            mkdir -p platforms/android/app/src/main/res/drawable
-            cp www/m-logo.png platforms/android/app/src/main/res/drawable/splash.png
-          elif [ -f "www/m-lgo.png" ]; then
+          if [ -f "www/m-lgo.png" ]; then
             mkdir -p platforms/android/app/src/main/res/drawable
             cp www/m-lgo.png platforms/android/app/src/main/res/drawable/splash.png
           fi
 
-      # --- Signing setup from Secrets ---
-      - name: Decode keystore (p12) and create signing config
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      - name: Decode keystore and create release-signing.properties
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > keystore.p12
-          mkdir -p platforms/android/app
-          mv keystore.p12 platforms/android/app/keystore.p12
-          cat > platforms/android/app/release-signing.properties <<PROP
+          mkdir -p platforms/android
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > platforms/android/keystore.p12
+          cat > platforms/android/release-signing.properties <<EOF
           storeFile=keystore.p12
-          storePassword=${KEYSTORE_PASSWORD}
-          keyAlias=${KEY_ALIAS}
-          keyPassword=${KEY_PASSWORD}
+          storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+          keyAlias=${{ secrets.KEY_ALIAS }}
+          keyPassword=${{ secrets.KEY_PASSWORD }}
           storeType=pkcs12
-          PROP
-          echo "Created release-signing.properties"
+          EOF
+          ls -la platforms/android
 
-      - name: Build Signed AAB
-        run: |
-          cordova build android --release -- --packageType=bundle
+      - name: Build signed AAB (release)
         env:
           CORDOVA_ANDROID_GRADLE_DISTRIBUTION_URL: https://services.gradle.org/distributions/gradle-8.6-bin.zip
+        run: |
+          cordova build android --release -- --packageType=bundle
 
-      - name: Upload AAB (signed)
+      - name: Upload AAB artifact
         uses: actions/upload-artifact@v4
         with:
-          name: bkHisab-aab-signed
+          name: bkHisab-signed-aab
           path: platforms/android/app/build/outputs/bundle/release/*.aab

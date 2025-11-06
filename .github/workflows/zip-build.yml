@@ -64,7 +64,7 @@ jobs:
             node -e "let p=require('./package.json'); if(p.cordova){p.cordova.plugins={}}; require('fs').writeFileSync('package.json', JSON.stringify(p,null,2));"
           fi
 
-      # ✅ Version Code 8 + Version Name 2.3.4
+      # ✅ নতুন Version Code 8 + Version Name 2.3.4
       - name: Update version info
         working-directory: src
         run: |
@@ -92,7 +92,9 @@ jobs:
         env:
           _JAVA_OPTIONS: "-Xmx2g"
           GRADLE_OPTS: "-Xmx2g"
-        run: cordova build android --release --packageType=bundle --no-telemetry --no-daemon --stacktrace
+        run: |
+          echo "⏳ Starting build with limited memory (2GB)..."
+          cordova build android --release --packageType=bundle --no-telemetry --no-daemon --stacktrace
 
       - name: Restore keystore from secret
         run: echo "$P12_B64" | base64 -d > keystore.p12
